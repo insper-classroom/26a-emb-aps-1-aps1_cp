@@ -19,6 +19,7 @@ volatile bool flag_alarme = false;
 volatile alarm_id_t alarme_id = -1;
 
 static volatile uint64_t ultimo_disparo[32] = {0};
+static uint32_t semente_p2 = 0;
 
 int64_t alarme_callback(alarm_id_t id, void *user_data) {
     flag_alarme = true;
@@ -26,15 +27,22 @@ int64_t alarme_callback(alarm_id_t id, void *user_data) {
 }
 
 void btn_callback(uint gpio, uint32_t events) {
-    if (events & GPIO_IRQ_EDGE_FALL) {
+    if(events & GPIO_IRQ_EDGE_FALL){
         uint64_t agora = time_us_64();
-        if (agora - ultimo_disparo[gpio] < DEBOUNCE_US) return;
+        if(agora - ultimo_disparo[gpio] < DEBOUNCE_US){
+            return;
+        }
         ultimo_disparo[gpio] = agora;
 
-        if      (gpio == BTN_R) flag_r = 1;
-        else if (gpio == BTN_Y) flag_y = 1;
-        else if (gpio == BTN_G) flag_g = 1;
-        else if (gpio == BTN_B) flag_b = 1;
+        if(gpio == BTN_R){
+            flag_r = 1;
+        } else if(gpio == BTN_Y){
+            flag_y = 1;
+        } else if(gpio == BTN_G){
+            flag_g = 1;
+        } else if(gpio == BTN_B){
+            flag_b = 1;
+        }
     }
 }
 
@@ -88,33 +96,43 @@ void contexto_reset(Contexto *ctx) {
 
 int ler_botao() {
     int r = flag_r, y = flag_y, g = flag_g, b = flag_b;
-    if (!r && !y && !g && !b) return -1;
+    if(!r && !y && !g && !b){
+        return -1;
+    }
     limpa_flags();
-    if (r) return 0;
-    if (y) return 1;
-    if (g) return 2;
-    if (b) return 3;
+    if(r){
+        return 0;
+    }
+    if(y){
+        return 1;
+    }
+    if(g){
+        return 2;
+    }
+    if(b){
+        return 3;
+    }
     return -1;
 }
 
 void liga_led(int ret) {
-    if (ret == 0) {
+    if(ret == 0){
         gpio_put(LED_R, 1);
         sleep_ms(500);
         gpio_put(LED_R, 0);
-    } else if (ret == 1) {
+    } else if(ret == 1){
         gpio_put(LED_Y, 1);
         sleep_ms(500);
         gpio_put(LED_Y, 0);
-    } else if (ret == 2) {
+    } else if(ret == 2){
         gpio_put(LED_G, 1);
         sleep_ms(500);
         gpio_put(LED_G, 0);
-    } else if (ret == 3) {
+    } else if(ret == 3){
         gpio_put(LED_B, 1);
         sleep_ms(500);
         gpio_put(LED_B, 0);
-    } else if (ret == 4) {
+    } else if(ret == 4){
         gpio_put(LED_R, 1);
         gpio_put(LED_Y, 1);
         gpio_put(LED_G, 1);
@@ -128,9 +146,9 @@ void liga_led(int ret) {
 }
 
 Estado estado_desligado() {
-    printf("Estado: DESLIGADO, aperte qualquer botao para ligar\n");
+    printf("Estado: DESLIGADO, aperte o botao azul para ligar\n");
     limpa_flags();
-    while (!flag_r && !flag_g && !flag_b) {
+    while(!flag_b){
         sleep_ms(5);
     }
     limpa_flags();
@@ -138,6 +156,7 @@ Estado estado_desligado() {
 }
 
 Estado estado_init() {
+    semente_p2 = (uint32_t)time_us_64();
     play_sound(SOUND_UNDAIA);
     liga_led(4);
     wait_sound_done();
@@ -146,24 +165,46 @@ Estado estado_init() {
 }
 
 Estado estado_aguardando(Contexto *ctx) {
-    printf("Aperte o botao verde para iniciar ou amarelo para desligar\n");
-    while (!flag_g) {
-        if (flag_y) {
+    stop_music();
+    printf("Verde: 1 jogador | Vermelho: 2 jogadores | Amarelo: desligar\n");
+    while(1){
+        if(flag_g){
+            srand((unsigned int)time_us_64());
+            limpa_flags();
+            play_music();
+            play_sound(SOUND_START);
+            ctx->modo = 1;
+            contexto_reset(ctx);
+            return ESTADO_MOSTRANDO_SEQUENCIA;
+        }
+        if(flag_r){
+            limpa_flags();
+            play_music();
+            play_sound(SOUND_START);
+            ctx->modo = 2;
+            ctx->jogador_atual = 0;
+            ctx->seq_len_2p[0] = 1;
+            ctx->seq_len_2p[1] = 1;
+            srand((unsigned int)time_us_64());
+            ctx->sequencia_2p[0][0] = rand() % 4;
+            srand(semente_p2);
+            ctx->sequencia_2p[1][0] = rand() % 4;
+            ctx->input_idx_2p[0] = 0;
+            ctx->input_idx_2p[1] = 0;
+            return ESTADO_2P_MOSTRANDO_SEQUENCIA;
+        }
+        if(flag_y){
             limpa_flags();
             return ESTADO_DESLIGADO;
         }
         sleep_ms(5);
     }
-    limpa_flags();
-    play_sound(SOUND_START);
-    contexto_reset(ctx);
-    return ESTADO_MOSTRANDO_SEQUENCIA;
 }
 
 Estado estado_mostrando_sequencia(Contexto *ctx) {
     printf("Mostrando sequencia:\n");
     sleep_ms(500);
-    for (int i = 0; i < ctx->seq_len; i++) {
+    for(int i = 0; i < ctx->seq_len; i++){
         play_sound(SOUND_PONTO);
         liga_led(ctx->sequencia[i]);
         sleep_ms(500);
@@ -171,36 +212,38 @@ Estado estado_mostrando_sequencia(Contexto *ctx) {
     ctx->input_idx = 0;
     limpa_flags();
     flag_alarme = false;
-    if (alarme_id >= 0) cancel_alarm(alarme_id);
+    if(alarme_id >= 0){
+        cancel_alarm(alarme_id);
+    }
     alarme_id = add_alarm_in_us(TIMEOUT_US, alarme_callback, NULL, true);
     return ESTADO_AGUARDANDO_INPUT;
 }
 
 Estado estado_aguardando_input(Contexto *ctx) {
-    if (flag_alarme) {
+    if(flag_alarme){
         printf("Timeout!\n");
         flag_alarme = false;
         return ESTADO_ERRO;
     }
 
     int btn = ler_botao();
-    if (btn == -1) {
+    if(btn == -1){
         return ESTADO_AGUARDANDO_INPUT;
     }
 
     liga_led(btn);
     limpa_flags();
 
-    if (btn != ctx->sequencia[ctx->input_idx]) {
+    if(btn != ctx->sequencia[ctx->input_idx]){
         return ESTADO_ERRO;
     }
 
     play_sound(SOUND_PONTO);
     ctx->input_idx++;
 
-    if (ctx->input_idx < ctx->seq_len) {
+    if(ctx->input_idx < ctx->seq_len){
         flag_alarme = false;
-        if (alarme_id >= 0) {
+        if(alarme_id >= 0){
             cancel_alarm(alarme_id);
             alarme_id = -1;
         }
@@ -213,11 +256,11 @@ Estado estado_aguardando_input(Contexto *ctx) {
 
 Estado estado_acerto(Contexto *ctx) {
     flag_alarme = false;
-    if (alarme_id >= 0) {
+    if(alarme_id >= 0){
         cancel_alarm(alarme_id);
         alarme_id = -1;
     }
-    if (ctx->seq_len == MAX_SEQ) {
+    if(ctx->seq_len == MAX_SEQ){
         printf("Parabens! Voce completou a sequencia!\n");
         return ESTADO_AGUARDANDO;
     }
@@ -228,21 +271,129 @@ Estado estado_acerto(Contexto *ctx) {
 }
 
 Estado estado_erro(Contexto *ctx) {
-    if (alarme_id >= 0) {
+    if(alarme_id >= 0){
         cancel_alarm(alarme_id);
         alarme_id = -1;
     }
     flag_alarme = false;
     play_sound(SOUND_FAIL);
-    
+
     int pontos = ctx->seq_len - 1;
     printf("Errou! Pontuacao: %d. Reiniciando jogo...\n", pontos);
-    
-    for (int i = 0; i < pontos; i++) {
+
+    for(int i = 0; i < pontos; i++){
         liga_led(4);
-        sleep_ms(250); 
+        sleep_ms(250);
     }
-    
+
+    sleep_ms(2000);
+    return ESTADO_AGUARDANDO;
+}
+
+Estado estado_2p_mostrando_sequencia(Contexto *ctx) {
+    int p = ctx->jogador_atual;
+    printf("Jogador %d: repita a sequencia\n", p + 1);
+    sleep_ms(1000);
+
+    for(int i = 0; i < ctx->seq_len_2p[p]; i++){
+        play_sound(SOUND_PONTO);
+        liga_led(ctx->sequencia_2p[p][i]);
+        sleep_ms(500);
+    }
+
+    ctx->input_idx_2p[p] = 0;
+    limpa_flags();
+    flag_alarme = false;
+    if(alarme_id >= 0){
+        cancel_alarm(alarme_id);
+    }
+    alarme_id = add_alarm_in_us(TIMEOUT_US, alarme_callback, NULL, true);
+    return ESTADO_2P_AGUARDANDO_REPETICAO;
+}
+
+Estado estado_2p_aguardando_repeticao(Contexto *ctx) {
+    int p = ctx->jogador_atual;
+
+    if(flag_alarme){
+        flag_alarme = false;
+        ctx->vencedor = 1 - p;
+        return ESTADO_2P_ERRO;
+    }
+
+    int btn = ler_botao();
+    if(btn == -1){
+        return ESTADO_2P_AGUARDANDO_REPETICAO;
+    }
+
+    liga_led(btn);
+    limpa_flags();
+
+    if(btn != ctx->sequencia_2p[p][ctx->input_idx_2p[p]]){
+        if(alarme_id >= 0){
+            cancel_alarm(alarme_id);
+            alarme_id = -1;
+        }
+        ctx->vencedor = 1 - p;
+        return ESTADO_2P_ERRO;
+    }
+
+    play_sound(SOUND_PONTO);
+    ctx->input_idx_2p[p]++;
+
+    if(ctx->input_idx_2p[p] < ctx->seq_len_2p[p]){
+        flag_alarme = false;
+        if(alarme_id >= 0){
+            cancel_alarm(alarme_id);
+            alarme_id = -1;
+        }
+        alarme_id = add_alarm_in_us(TIMEOUT_US, alarme_callback, NULL, true);
+        return ESTADO_2P_AGUARDANDO_REPETICAO;
+    }
+
+    return ESTADO_2P_ACERTO;
+}
+
+Estado estado_2p_acerto(Contexto *ctx) {
+    int p = ctx->jogador_atual;
+    flag_alarme = false;
+    if(alarme_id >= 0){
+        cancel_alarm(alarme_id);
+        alarme_id = -1;
+    }
+
+    if(ctx->seq_len_2p[p] >= MAX_SEQ){
+        printf("Empate! Sequencia maxima atingida!\n");
+        play_sound(SOUND_FAIL);
+        sleep_ms(2000);
+        return ESTADO_AGUARDANDO;
+    }
+
+    ctx->sequencia_2p[p][ctx->seq_len_2p[p]] = rand() % 4;
+    ctx->seq_len_2p[p]++;
+    printf("Correto! Nivel do Jogador %d: %d\n", p + 1, ctx->seq_len_2p[p]);
+
+    ctx->jogador_atual = 1 - p;
+    sleep_ms(1000);
+    return ESTADO_2P_MOSTRANDO_SEQUENCIA;
+}
+
+Estado estado_2p_erro(Contexto *ctx) {
+    if(alarme_id >= 0){
+        cancel_alarm(alarme_id);
+        alarme_id = -1;
+    }
+    flag_alarme = false;
+    play_sound(SOUND_FAIL);
+
+    int pontos = ctx->seq_len_2p[1 - ctx->vencedor] - 1;
+    printf("Jogador %d venceu! Jogador %d errou na sequencia %d.\n",
+           ctx->vencedor + 1, (1 - ctx->vencedor) + 1, pontos + 1);
+
+    for(int i = 0; i < pontos; i++){
+        liga_led(4);
+        sleep_ms(250);
+    }
+
     sleep_ms(2000);
     return ESTADO_AGUARDANDO;
 }

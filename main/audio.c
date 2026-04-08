@@ -5,7 +5,6 @@
 #include "hardware/irq.h"
 #include "hardware/gpio.h"
 
-
 #include "Start.h"
 
 #define WAV_DATA ponto_wav_data
@@ -23,23 +22,51 @@
 #undef WAV_DATA
 #undef WAV_DATA_LENGTH
 
+#define WAV_DATA jogo_wav_data
+#include "Jogo.h"
+#undef WAV_DATA
+#undef WAV_DATA_LENGTH
+
 #define AUDIO_PIN 22
 
-static volatile int playing_sound = 0;
-static volatile int sample_index = 0;
-static volatile const uint8_t *current_wav_data = NULL;
-static volatile uint32_t current_wav_length = 0;
+typedef enum {
+    AUDIO_IDLE,
+    AUDIO_MUSIC,
+    AUDIO_SFX,
+} AudioState;
+
+static volatile AudioState audio_state = AUDIO_IDLE;
+
+static volatile int sfx_index = 0;
+static volatile const uint8_t *sfx_wav_data = NULL;
+static volatile uint32_t sfx_wav_length = 0;
+
+static volatile int music_position = 0;
+static volatile const uint8_t *music_wav_data = NULL;
+static volatile uint32_t music_wav_length = 0;
 
 static void pwm_interrupt_handler() {
     pwm_clear_irq(pwm_gpio_to_slice_num(AUDIO_PIN));
-    if (playing_sound) {
-        if (sample_index < ((int)current_wav_length << 3) - 1) {
-            pwm_set_gpio_level(AUDIO_PIN, current_wav_data[sample_index >> 3]);
-            sample_index++;
+
+    if(audio_state == AUDIO_SFX){
+        if(sfx_index < ((int)sfx_wav_length << 3) - 1){
+            pwm_set_gpio_level(AUDIO_PIN, sfx_wav_data[sfx_index >> 3]);
+            sfx_index++;
         } else {
-            playing_sound = 0;
-            sample_index = 0;
-            pwm_set_gpio_level(AUDIO_PIN, 0);
+            sfx_index = 0;
+            if(music_wav_data != NULL){
+                audio_state = AUDIO_MUSIC;
+            } else {
+                audio_state = AUDIO_IDLE;
+                pwm_set_gpio_level(AUDIO_PIN, 0);
+            }
+        }
+    } else if(audio_state == AUDIO_MUSIC){
+        if(music_position < ((int)music_wav_length << 3) - 1){
+            pwm_set_gpio_level(AUDIO_PIN, music_wav_data[music_position >> 3]);
+            music_position++;
+        } else {
+            music_position = 0;
         }
     } else {
         pwm_set_gpio_level(AUDIO_PIN, 0);
@@ -61,28 +88,41 @@ void core1_entry() {
     pwm_init(slice, &config, true);
     pwm_set_gpio_level(AUDIO_PIN, 0);
 
-    while (true) {
-        if (multicore_fifo_rvalid()) {
+    while(true){
+        if(multicore_fifo_rvalid()){
             uint32_t cmd = multicore_fifo_pop_blocking();
-            playing_sound = 0;
-            sample_index = 0;
 
-            if (cmd == SOUND_START) {
-                current_wav_data = AUDIO_WAV_DATA;
-                current_wav_length = AUDIO_WAV_DATA_LENGTH;
-                playing_sound = 1;
-            } else if (cmd == SOUND_PONTO) {
-                current_wav_data = ponto_wav_data;
-                current_wav_length = sizeof(ponto_wav_data);
-                playing_sound = 1;
-            } else if (cmd == SOUND_FAIL) {
-                current_wav_data = fail_wav_data;
-                current_wav_length = sizeof(fail_wav_data);
-                playing_sound = 1;
-            } else if (cmd == SOUND_UNDAIA) {
-                current_wav_data = undaia_wav_data;
-                current_wav_length = sizeof(undaia_wav_data);
-                playing_sound = 1;
+            if(cmd == SOUND_START){
+                sfx_wav_data = AUDIO_WAV_DATA;
+                sfx_wav_length = AUDIO_WAV_DATA_LENGTH;
+                sfx_index = 0;
+                audio_state = AUDIO_SFX;
+            } else if(cmd == SOUND_PONTO){
+                sfx_wav_data = ponto_wav_data;
+                sfx_wav_length = sizeof(ponto_wav_data);
+                sfx_index = 0;
+                audio_state = AUDIO_SFX;
+            } else if(cmd == SOUND_FAIL){
+                music_wav_data = NULL;
+                sfx_wav_data = fail_wav_data;
+                sfx_wav_length = sizeof(fail_wav_data);
+                sfx_index = 0;
+                audio_state = AUDIO_SFX;
+            } else if(cmd == SOUND_UNDAIA){
+                music_wav_data = NULL;
+                sfx_wav_data = undaia_wav_data;
+                sfx_wav_length = sizeof(undaia_wav_data);
+                sfx_index = 0;
+                audio_state = AUDIO_SFX;
+            } else if(cmd == SOUND_MUSIC_START){
+                music_wav_data = jogo_wav_data;
+                music_wav_length = sizeof(jogo_wav_data);
+                music_position = 0;
+                audio_state = AUDIO_MUSIC;
+            } else if(cmd == SOUND_MUSIC_STOP){
+                music_wav_data = NULL;
+                audio_state = AUDIO_IDLE;
+                pwm_set_gpio_level(AUDIO_PIN, 0);
             }
         }
         tight_loop_contents();
@@ -93,8 +133,16 @@ void play_sound(int sound_id) {
     multicore_fifo_push_blocking((uint32_t)sound_id);
 }
 
+void play_music() {
+    multicore_fifo_push_blocking((uint32_t)SOUND_MUSIC_START);
+}
+
+void stop_music() {
+    multicore_fifo_push_blocking((uint32_t)SOUND_MUSIC_STOP);
+}
+
 void wait_sound_done() {
-    while (playing_sound) {
+    while(audio_state == AUDIO_SFX){
         tight_loop_contents();
     }
 }

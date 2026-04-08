@@ -140,6 +140,7 @@ Estado estado_desligado() {
 Estado estado_init() {
     play_sound(SOUND_UNDAIA);
     liga_led(4);
+    wait_sound_done();
     printf("Genius iniciado\n");
     return ESTADO_AGUARDANDO;
 }

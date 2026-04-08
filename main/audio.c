@@ -92,3 +92,9 @@ void core1_entry() {
 void play_sound(int sound_id) {
     multicore_fifo_push_blocking((uint32_t)sound_id);
 }
+
+void wait_sound_done() {
+    while (playing_sound) {
+        tight_loop_contents();
+    }
+}

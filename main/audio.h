@@ -8,5 +8,6 @@
 
 void core1_entry();
 void play_sound(int sound_id);
+void wait_sound_done();
 
 #endif
